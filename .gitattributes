@@ -1,0 +1,7 @@
+# Set all files to LF in repo, with auto conversion on checkout
+* text=auto
+
+# Explicitly mark binary files as not to be touched
+*.pdf binary
+*.png binary
+*.jpg binary
