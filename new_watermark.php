@@ -1,8 +1,14 @@
 <?php
 require('fpdf/fpdf.php');
 require('fpdi/src/autoload.php');
+require('PHPWord\src\PhpWord\Autoloader.php');
+\PhpOffice\PhpWord\Autoloader::register(); // Register the autoloader
 
 use setasign\Fpdi\Fpdi;
+
+use PhpOffice\PhpWord\IOFactory;
+use PhpOffice\PhpWord\PhpWord;
+
 
 session_start();
 
@@ -50,6 +56,39 @@ function downloadPdfFromUrl($url) {
     return $tempPdf;
 }
 
+
+// Download DOCX function
+function downloadFileFromUrl($url) {
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $fileData = curl_exec($ch);
+    
+    if ($fileData === false) {
+        die("Error: Unable to download file.");
+    }
+
+    // Save to a temporary file
+    $tempFile = tempnam(sys_get_temp_dir(), 'file');
+    file_put_contents($tempFile, $fileData);
+
+    // Get MIME type to check file format
+    $mimeType = mime_content_type($tempFile);
+
+    if ($mimeType === 'application/pdf') {
+        return ['file' => $tempFile, 'type' => 'pdf'];
+    } elseif ($mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+        return ['file' => $tempFile, 'type' => 'docx'];
+    } else {
+        unlink($tempFile);
+        die("Error: Unsupported file type. Only PDF and DOCX are allowed.");
+    }
+}
+
+
+
 // 5. PDF Class with Watermarking
 class PDF_Rotate extends Fpdi {
     function setPDFMetadata($title, $author) {
@@ -86,7 +125,7 @@ class PDF_Rotate extends Fpdi {
 }
 
 // 6. Main Watermarking Function
-function addWatermark($inputFile, $username, $email, $imagePath, $originalFilename) {
+function addWatermarkToPdf($inputFile, $username, $email, $imagePath, $originalFilename) {
     $pdf = new PDF_Rotate();
     
     // Set metadata
@@ -141,18 +180,112 @@ function addWatermark($inputFile, $username, $email, $imagePath, $originalFilena
     $pdf->Output('I');
 }
 
+
+function addWatermarkToDocx($inputFile, $username, $email, $imagePath, $originalFilename) {
+    $phpWord = IOFactory::load($inputFile);
+    $section = $phpWord->getSections()[0]; // Get first section
+    $timestamp = date("Y-m-d H:i:s");
+
+    // 1. **Set Metadata (Equivalent to setPDFMetadata)**
+    $phpWord->getDocInfo()->setCreator($username);
+    $phpWord->getDocInfo()->setTitle(pathinfo($originalFilename, PATHINFO_FILENAME));
+    $phpWord->getDocInfo()->setDescription("Downloaded from ailms.shiksak.com");
+    $phpWord->getDocInfo()->setKeywords("Watermarked DOCX");
+
+    // 2. **Add Centered Watermark Image (Equivalent to AddCenteredImage)**
+    $header = $section->addHeader();
+    // $header->addImage(
+    //     $imagePath,
+    //     [
+    //         'width' => 80,  // Matches the PDF image width
+    //         'height' => 50, // Adjusted height
+    //         'wrappingStyle' => 'behind',
+    //         'alignment' => \PhpOffice\PhpWord\SimpleType\Jc::CENTER,
+    //     ]
+    // );
+
+    $header->addImage(
+        $imagePath,
+        [
+            'width' => 300,
+            'height' => 200,
+            'wrappingStyle' => 'behind',
+            'positioning' => 'absolute',
+            'posHorizontalRel' => 'page',
+            'posVerticalRel' => 'page',
+            'posHorizontal' => 'center',
+            'posVertical' => 'center'
+        ]
+    );
+
+    // 3. **Add Centered Text Watermark (Equivalent to CenteredText)**
+    $textRun = $header->addTextRun([
+        'alignment' => 'center',
+        'positioning' => 'absolute',
+        'posHorizontalRel' => 'page',
+        'posVerticalRel' => 'page',
+        'posHorizontal' => 'center',
+        'posVertical' => 'center',
+        'posVerticalOffset' => 30 // Moves text below the image
+    ]);
+    $textRun->addText("Downloaded by $username, on: $timestamp", ['size' => 10, 'color' => '808080']);
+    $section->addTextBreak();
+    // $textRun = $section->addTextRun(['alignment' => 'center']);
+    // $textRun->addText("Downloaded on: $timestamp", ['size' => 10, 'color' => '808080']);
+
+    // 4. **Add Footer with Legal Notice (Equivalent to Footer Section in PDF)**
+    $footer = $section->addFooter();
+    // $footer->addText("Proprietary content. © Great Learning. All Rights Reserved.", ['size' => 10, 'color' => '808080'], ['alignment' => 'center']);
+    // $footer->addText("This file is meant for personal use by $email only.", ['size' => 10, 'color' => 'FF0000']);
+    // $footer->addText("Sharing or publishing the contents in part or full is liable for legal action.", ['size' => 10, 'color' => 'FF0000']);
+
+
+    // $textRun = $footer->addTextRun(['alignment' => 'center', 'spacing' => 80], ['alignment' => 'center']); // Reduced spacing
+    // $textRun->addText("Proprietary content. © Great Learning. All Rights Reserved.", ['size' => 10, 'color' => '808080']);
+    // $textRun->addText("This file is meant for personal use by $email only.", ['size' => 10, 'color' => 'FF0000']);
+    // $textRun->addText(" Sharing or publishing the contents in part or full is liable for legal action.", ['size' => 10, 'color' => 'FF0000']);
+    $footer->addTextRun(['alignment' => 'center'])->addText("Proprietary content. © Great Learning. All Rights Reserved.", ['size' => 10, 'color' => '808080']);
+    $footer->addTextRun(['alignment' => 'center'])->addText("This file is meant for personal use by $email only.", ['size' => 10, 'color' => 'FF0000']);
+    $footer->addTextRun(['alignment' => 'center'])->addText("Sharing or publishing the contents in part or full is liable for legal action.", ['size' => 10, 'color' => 'FF0000']);
+
+
+    // 5. **Save the modified document**
+    $outputFile = sys_get_temp_dir() . '/' . $originalFilename;
+    $phpWordWriter = IOFactory::createWriter($phpWord, 'Word2007');
+    $phpWordWriter->save($outputFile);
+
+    // Serve the modified file
+    header("Content-Description: File Transfer");
+    header("Content-Disposition: attachment; filename=\"$originalFilename\"");
+    header("Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    readfile($outputFile);
+
+    // Cleanup
+    unlink($outputFile);
+}
+
 // 7. Execute the Process
-$tempPdf = downloadPdfFromUrl($pdfUrl);
-$imagePath = 'newLogo.jpg';
 
-addWatermark(
-    $tempPdf,
-    $username,
-    $email,
-    $imagePath,
-    $originalFilename
-);
+try {
+    // Download and check file type
+    $fileInfo = downloadFileFromUrl($pdfUrl);
+    $filePath = $fileInfo['file'];
+    $fileType = $fileInfo['type'];
+    $imagePath = 'liba-logo.png';
 
-// 8. Cleanup
-unlink($tempPdf);
-?>
+    if ($fileType === 'pdf') {
+        addWatermarkToPdf($filePath, $username, $email, $imagePath, $originalFilename);
+    } elseif ($fileType === 'docx') {
+        addWatermarkToDocx($filePath, $username, $email, $imagePath, $originalFilename);
+    } else {
+        throw new Exception("Unsupported file type.");
+    }
+
+    // Cleanup
+    unlink($filePath);
+} catch (Exception $e) {
+    die("Error: " . $e->getMessage());
+}
+
+
+
